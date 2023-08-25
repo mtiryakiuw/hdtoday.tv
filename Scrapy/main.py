@@ -1,4 +1,6 @@
 import scrapy
+import re
+from bs4 import BeautifulSoup
 
 class Link(scrapy.Item):
     link = scrapy.Field()
@@ -29,7 +31,7 @@ class MoviesSpider(scrapy.Spider):
 
     def start_requests(self):
         try:
-            with open("myproject/links.csv", "rt") as f:
+            with open("links.csv", "rt") as f:
                 start_urls = [url.strip() for url in f.readlines()][1:]
         except:
             start_urls = []
@@ -41,21 +43,40 @@ class MoviesSpider(scrapy.Spider):
         movie_item = Movie()
 
         movie_item['name'] = response.xpath('//h2[@class="heading-name"]//text()').get()
-        movie_item['imdb'] = response.xpath('//span[@class="item mr-2"]//text()').get()
+        imdb_rating_text = response.xpath('//span[@class="item mr-2"]//text()').get()
+        imdb_rating = re.search(r'\d+(\.\d+)?', imdb_rating_text)
 
-        released = response.xpath('//span/strong[contains(text(), "Released:")]/following-sibling::text()').get()
-        genres = response.xpath('//span/strong[contains(text(), "Genre:")]/following-sibling::a/text()').getall()
-        casts = response.xpath('//span/strong[contains(text(), "Casts:")]/following-sibling::a/text()').getall()
+        if imdb_rating:
+            movie_item['imdb'] = imdb_rating.group()
+        else:
+            movie_item['imdb'] = None
 
-        duration = response.xpath('//span/strong[contains(text(), "Duration:")]/following-sibling::text()').get()
-        duration = duration.strip() if duration else None
+        # Parse the HTML content using Beautiful Soup
+        movie_page_soup = BeautifulSoup(response.body, 'html.parser')
 
-        country = response.xpath('//span/strong[contains(text(), "Country:")]/following-sibling::a/text()').get()
+        release_date_element = movie_page_soup.find('span', string=re.compile(r'Released:'))
+        release_date = release_date_element.find_next_sibling(string=True).strip()
 
-        movie_item['released'] = released.strip() if released else None
-        movie_item['genres'] = [genre.strip() for genre in genres]
-        movie_item['casts'] = [cast.strip() for cast in casts]
+        genres_element = movie_page_soup.find('span', string=re.compile(r'Genre:'))
+        genres = [a.get_text(strip=True) for a in genres_element.find_next_siblings('a')]
+        genres_line = ', '.join(genres)
+
+        casts_element = movie_page_soup.find('span', string=re.compile(r'Casts:'))
+        casts = [a.get_text(strip=True) for a in casts_element.find_next_siblings('a')]
+        casts_line = ', '.join(casts)
+
+        duration_element = movie_page_soup.find('span', string=re.compile(r'Duration:'))
+        duration = duration_element.find_next_sibling(string=True).strip().replace('min', '').replace('\n', '').replace(
+            ' ', '')
+        formatted_duration = f"{duration} min"
+
+        country_element = movie_page_soup.find('span', string=re.compile(r'Country:'))
+        country = country_element.find_next('a').get_text(strip=True)
+
+        movie_item['released'] = release_date
+        movie_item['genres'] = genres
+        movie_item['casts'] = casts_line
         movie_item['duration'] = duration
-        movie_item['country'] = country.strip() if country else None
+        movie_item['country'] = country
 
         yield movie_item
